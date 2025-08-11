@@ -116,7 +116,7 @@ program miniweather
   call reductions(mass0,te0)
 
   !Output the initial state
-  call output(state,etime)
+  if ( output_freq > 0 ) call output(state,etime)
 
   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
   !! MAIN TIME STEP LOOP
@@ -136,7 +136,7 @@ program miniweather
     etime = etime + dt
     output_counter = output_counter + dt
     !If it's time for output, reset the counter, and do output
-    if (output_counter >= output_freq) then
+    if ( (output_freq > 0) .and. (output_counter >= output_freq) ) then
       output_counter = output_counter - output_freq
       call output(state,etime)
     endif

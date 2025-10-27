@@ -127,6 +127,7 @@ void   set_halo_values_z    ( double *state );
 void   reductions           ( double &mass , double &te );
 
 
+// 主函数入口保持不变
 ///////////////////////////////////////////////////////////////////////////////////////
 // THE MAIN PROGRAM STARTS HERE
 ///////////////////////////////////////////////////////////////////////////////////////
@@ -178,6 +179,7 @@ int main(int argc, char **argv) {
   finalize();
 }
 
+// x 方向 和 z 方向交替进行，每个方向进行三次 Runge-Kutta 迭代
 
 //Performs a single dimensionally split time step using a simple low-storage three-stage Runge-Kutta time integrator
 //The dimensional splitting is a second-order-accurate alternating Strang splitting in which the
@@ -400,7 +402,7 @@ void set_halo_values_x( double *state ) {
   int k, ll, ind_r, ind_u, ind_t, i, s, ierr;
   double z;
 
-  if (nranks == 1) {
+  if (nranks == 1) { // 如果只有一进程，则不需要 MPI 通信
 
     for (ll=0; ll<NUM_VARS; ll++) {
       for (k=0; k<nz; k++) {
@@ -411,15 +413,18 @@ void set_halo_values_x( double *state ) {
       }
     }
 
-  } else {
-
+  } else {  
+    // MPI 是分布式计算
+    // 我们在设置halo值时，需要MPI通信，获取相邻进程的边界值
+    // 此后，在 mpi 计算域内，执行的就是本地计算
     MPI_Request req_r[2], req_s[2];
 
-    //Prepost receives
+    //Prepost receives：提前接收相邻进程的边界值
     ierr = MPI_Irecv(recvbuf_l,hs*nz*NUM_VARS,MPI_DOUBLE, left_rank,0,MPI_COMM_WORLD,&req_r[0]);
     ierr = MPI_Irecv(recvbuf_r,hs*nz*NUM_VARS,MPI_DOUBLE,right_rank,1,MPI_COMM_WORLD,&req_r[1]);
 
-    //Pack the send buffers
+    //Pack the send buffers：打包发送相邻进程的边界值
+    // 这里使用的是非阻塞发送，因为使用了halo值，发送和接收可以同时进行
     for (ll=0; ll<NUM_VARS; ll++) {
       for (k=0; k<nz; k++) {
         for (s=0; s<hs; s++) {
@@ -429,14 +434,14 @@ void set_halo_values_x( double *state ) {
       }
     }
 
-    //Fire off the sends
+    //Fire off the sends: 发送相邻进程的边界值
     ierr = MPI_Isend(sendbuf_l,hs*nz*NUM_VARS,MPI_DOUBLE, left_rank,1,MPI_COMM_WORLD,&req_s[0]);
     ierr = MPI_Isend(sendbuf_r,hs*nz*NUM_VARS,MPI_DOUBLE,right_rank,0,MPI_COMM_WORLD,&req_s[1]);
 
-    //Wait for receives to finish
+    //Wait for receives to finish: 等待接收相邻进程的边界值
     ierr = MPI_Waitall(2,req_r,MPI_STATUSES_IGNORE);
 
-    //Unpack the receive buffers
+    //Unpack the receive buffers: 解包接收相邻进程的边界值
     for (ll=0; ll<NUM_VARS; ll++) {
       for (k=0; k<nz; k++) {
         for (s=0; s<hs; s++) {
@@ -446,12 +451,14 @@ void set_halo_values_x( double *state ) {
       }
     }
 
-    //Wait for sends to finish
+    //Wait for sends to finish: 等待发送相邻进程的边界值
     ierr = MPI_Waitall(2,req_s,MPI_STATUSES_IGNORE);
   }
 
+  // 如果数据源是注入，则需要设置halo值
   if (data_spec_int == DATA_SPEC_INJECTION) {
     if (myrank == 0) {
+      // 如果我是主进程，则需要设置halo值
       for (k=0; k<nz; k++) {
         for (i=0; i<hs; i++) {
           z = (k_beg + k+0.5)*dz;
@@ -506,7 +513,7 @@ void init( int *argc , char ***argv ) {
   double x, z, r, u, w, t, hr, ht, nper;
 
   ierr = MPI_Init(argc,argv);
-
+  // 初始化 MPI 环境
   ierr = MPI_Comm_size(MPI_COMM_WORLD,&nranks);
   ierr = MPI_Comm_rank(MPI_COMM_WORLD,&myrank);
   nper = ( (double) nx_glob ) / nranks;
@@ -899,6 +906,7 @@ void reductions( double &mass , double &te ) {
   double glob[2], loc[2];
   loc[0] = mass;
   loc[1] = te;
+  // mpi：将本地结果loc，通过 MPI_Allreduce 函数，将所有进程的结果累加到 glob 中
   int ierr = MPI_Allreduce(loc,glob,2,MPI_DOUBLE,MPI_SUM,MPI_COMM_WORLD);
   mass = glob[0];
   te   = glob[1];

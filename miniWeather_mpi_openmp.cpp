@@ -229,6 +229,11 @@ void semi_discrete_step( double *state_init , double *state_forcing , double *st
   }
 
   //Apply the tendencies to the fluid state
+  // 1. 使用 collapse(3) 展开三层循环，增加并行度
+  // 2. private(...) 声明线程私有变量（临时变量和索引）
+  // 3. 每个 (ll,k,i) 组合对应唯一的数组位置，不同线程写入不同位置，无数据竞争
+  // 4. 使用双缓冲（state ↔ state_tmp），读写分离，确保线程安全
+  // 5. state_init 和 tend 在并行区域内只读，多线程安全
 #pragma omp parallel for private(inds,indt,x,z,x0,z0,xrad,zrad,amp,dist,wpert,indw) collapse(3)
   for (ll=0; ll<NUM_VARS; ll++) {
     for (k=0; k<nz; k++) {
@@ -276,10 +281,13 @@ void compute_tendencies_x( double *state , double *flux , double *tend , double 
   //Compute the hyperviscosity coefficient
   hv_coef = -hv_beta * dx / (16*dt);
   //Compute fluxes in the x-direction for each cell
+  // 展开外层两层循环，增加并行度
+  // 内层是 stencil 计算
 #pragma omp parallel for private(inds,stencil,vals,d3_vals,r,u,w,t,p,ll,s) collapse(2)
   for (k=0; k<nz; k++) {
     for (i=0; i<nx+1; i++) {
       //Use fourth-order interpolation from four cell averages to compute the value at the interface in question
+      // 这里其实可以单独并行，但是效率提升有限，反而会增加代码复杂度
       for (ll=0; ll<NUM_VARS; ll++) {
         for (s=0; s < sten_size; s++) {
           inds = ll*(nz+2*hs)*(nx+2*hs) + (k+hs)*(nx+2*hs) + i+s;
@@ -872,6 +880,8 @@ void finalize() {
 void reductions( double &mass , double &te ) {
   double mass_loc = 0;
   double te_loc   = 0;
+  // 对于 mass 和 te, 使用 reduction 关键字，将本地结果累加到全局结果中
+  // 线程在并行区域结束之前，使用的是本地结果，不会相互影响，离开并行区域后，累加到全局
   #pragma omp parallel for reduction(+:mass_loc,te_loc)
   for (int k=0; k<nz; k++) {
     for (int i=0; i<nx; i++) {

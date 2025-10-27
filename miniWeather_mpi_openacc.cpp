@@ -134,6 +134,10 @@ int main(int argc, char **argv) {
 
   init( &argc , &argv );
 
+  // 和 openmp 类似，将数据映射到 GPU 上，只是命令不同
+  // copyin: 将数据从 CPU 传输到 GPU, 不回传
+  // create: 在 GPU 上分配内存，GPU 主存空间
+  // copy: 将数据从 CPU 传输到 GPU, 双向传输
 #pragma acc data copyin(state_tmp[0:(nz+2*hs)*(nx+2*hs)*NUM_VARS],hy_dens_cell[0:nz+2*hs],hy_dens_theta_cell[0:nz+2*hs],hy_dens_int[0:nz+1],hy_dens_theta_int[0:nz+1],hy_pressure_int[0:nz+1]) \
         create(flux[0:(nz+1)*(nx+1)*NUM_VARS],tend[0:nz*nx*NUM_VARS],sendbuf_l[0:hs*nz*NUM_VARS],sendbuf_r[0:hs*nz*NUM_VARS],recvbuf_l[0:hs*nz*NUM_VARS],recvbuf_r[0:hs*nz*NUM_VARS]) \
         copy(state[0:(nz+2*hs)*(nx+2*hs)*NUM_VARS])
@@ -237,6 +241,9 @@ void semi_discrete_step( double *state_init , double *state_forcing , double *st
   }
 
   //Apply the tendencies to the fluid state
+  // default(present) 表示使用当前设备上的数据
+  // async 表示异步执行，不等待
+  // 语法相比 openmp 更简洁，但是性能不如 openmp，因为 openmp 可以更精细地控制线程，而 acc 只能控制到循环级别
 #pragma acc parallel loop collapse(3) default(present) async
   for (ll=0; ll<NUM_VARS; ll++) {
     for (k=0; k<nz; k++) {
@@ -429,6 +436,7 @@ void set_halo_values_x( double *state ) {
       }
     }
 
+    // 从 GPU 传输到 CPU
 #pragma acc update host(sendbuf_l[0:nz*hs*NUM_VARS],sendbuf_r[0:nz*hs*NUM_VARS]) async
 #pragma acc wait
 
@@ -439,9 +447,10 @@ void set_halo_values_x( double *state ) {
     //Wait for receives to finish
     ierr = MPI_Waitall(2,req_r,MPI_STATUSES_IGNORE);
 
+    // 从 CPU 传输到 GPU
 #pragma acc update device(recvbuf_l[0:nz*hs*NUM_VARS],recvbuf_r[0:nz*hs*NUM_VARS]) async
 
-    //Unpack the receive buffers
+    // 解包
 #pragma acc parallel loop collapse(3) default(present) async
     for (ll=0; ll<NUM_VARS; ll++) {
       for (k=0; k<nz; k++) {

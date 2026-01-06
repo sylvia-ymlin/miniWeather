@@ -1,0 +1,11 @@
+build/
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+CTestTestfile.cmake
+miniWeather_mpi
+miniWeather_serial
+*.nc
+*.o
+.DS_Store

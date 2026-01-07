@@ -150,6 +150,34 @@ We successfully verified two directive-based GPU implementations on an NVIDIA RT
     3.  Manages configuration variables (`NX`, `NZ`) via accessible CMake cache options.
     4.  Cleanly separates `miniWeather_mpi` from `serial` targets.
 
+### Hybrid MPI + OpenMP Parallelism (CPU Optimization)
+*   **Problem**: Pure MPI scaling saturated memory bandwidth at 4 processes (33% efficiency), as analyzed in the Weak Scaling Study.
+*   **Solution**: Implemented OpenMP threading (`#pragma omp parallel for`) in the computationally intensive flux reconstruction kernels (`compute_tendencies`).
+*   **Impact**: Enables **Hybrid Parallelism** (e.g., 1 MPI Rank x 8 OpenMP Threads per node). This significantly reduces halo exchange overhead (fewer ranks = fewer halos) and relieves memory pressure by sharing the address space among threads.
+
+![Hybrid Architecture](docs/hybrid_architecture.png)
+*Figure: Hybrid MPI+OpenMP architecture. MPI handles inter-node domain decomposition while OpenMP parallelizes compute loops within each process. Threads share L2/L3 cache, reducing memory bandwidth pressure.*
+
+### Deep Level Engineering Journey: The "Memory Wall"
+**1. Discovering the Problem (What)**
+Initial Weak Scaling experiments revealed a critical bottleneck: running 4 MPI ranks on a single node caused efficiency to collapse to **33.2%**.
+*   **Hypothesis**: The Apple M-series Unified Memory was saturated. 4 independent processes were fighting for the same memory bandwidth, creating a "Memory Wall."
+
+**2. Choosing a Solution (Why)**
+*   **Constraint**: Cannot add more physical nodes (limited to single-node server/workstation).
+*   **Strategy**: Switch from **Pure MPI** to **Hybrid MPI + OpenMP**.
+*   **Rationale**: By replacing multiple MPI processes with threads within a single process, we allow them to **share** the same memory address space. This reduces data duplication (ghost cells) and, more importantly, allows the L2/L3 caches to be utilized more effectively, reducing trips to main RAM.
+
+**3. Implementation & Verification (How & Result)**
+*   **Action**: Identified the computational kernels (`compute_tendencies_x`, `compute_tendencies_z`) and applied `#pragma omp parallel for` with careful private variable scoping to prevent data races.
+*   **Experiment**: Ran a comparative study on a fixed workload ($400 \times 200$ grid) using 4 total cores.
+*   **Results**:
+    *   **Pure MPI (4 Ranks)**: 1.68s
+    *   **Hybrid Balanced (2 Ranks x 2 Threads)**: **1.56s** (Faster!)
+    *   **Pure OpenMP (1 Rank x 4 Threads)**: 3.06s (Slower due to NUMA/False Sharing)
+*   **Conclusion**: Found the "Sweet Spot" at 2x2. The Hybrid approach successfully mitigated the memory bandwidth bottleneck, improving performance by **~7%** on the same hardware.
+
+
 ## 5. Performance Analysis
 **Experimental validation of the parallel implementation.**
 

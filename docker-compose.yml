@@ -7,7 +7,7 @@ services:
     container_name: mpi-master
     hostname: master
     volumes:
-      - ..:/app
+      - .:/app
     ports:
       - "2222:22"
     networks:
@@ -20,7 +20,7 @@ services:
     container_name: mpi-worker
     hostname: worker
     volumes:
-      - ..:/app
+      - .:/app
     networks:
       - mpi-net
     depends_on:

@@ -37,12 +37,12 @@ add_definitions(-D_DATA_SPEC=${DATA_SPEC})
 # ============================================================================
 # Target 1: Serial Baseline (No parallelism)
 # ============================================================================
-add_executable(miniWeather_serial miniWeather_serial.cpp)
+add_executable(miniWeather_serial src/miniWeather_serial.cpp)
 
 # ============================================================================
 # Target 2: MPI + OpenMP (Hybrid CPU Parallelism)
 # ============================================================================
-add_executable(miniWeather_mpi miniWeather_mpi.cpp)
+add_executable(miniWeather_mpi src/miniWeather_mpi.cpp)
 target_link_libraries(miniWeather_mpi PUBLIC MPI::MPI_CXX)
 if(OpenMP_CXX_FOUND)
     target_link_libraries(miniWeather_mpi PUBLIC OpenMP::OpenMP_CXX)
@@ -69,7 +69,7 @@ endif()
 # ============================================================================
 option(ENABLE_OMP_TARGET "Build OpenMP Target GPU version" OFF)
 if(ENABLE_OMP_TARGET)
-    add_executable(miniWeather_omp_target miniWeather_mpi_openmp45.cpp)
+    add_executable(miniWeather_omp_target src/miniWeather_mpi_openmp45.cpp)
     target_link_libraries(miniWeather_omp_target PUBLIC MPI::MPI_CXX)
     # Adjust flags based on your compiler (example for nvc++)
     target_compile_options(miniWeather_omp_target PRIVATE -mp=gpu -Minfo=mp)

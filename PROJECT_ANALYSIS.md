@@ -1,5 +1,40 @@
 # Project Deep Analysis: miniWeather (HPC Mini-App)
 
+## Executive Summary: Three-Layer Analysis
+
+### 🔍 表层 (Surface Layer): 项目做了什么？
+
+**项目本质**：将 Oak Ridge National Lab 的天气模拟 Mini-App 从"能跑"变成"能跑得快且可验证"。
+
+| 组件 | 说明 |
+|---|---|
+| **输入** | 网格大小 (`--nx`, `--nz`)、模拟时间 (`--time`)、MPI 进程数、OpenMP 线程数 |
+| **输出** | 物理验证 (`d_mass`, `d_te`)、性能指标 (`CPU Time`, `Scaling Efficiency`) |
+| **运行方式** | `./miniWeather_serial`、`mpirun -n N ./miniWeather_mpi`、`./miniWeather_openacc` (GPU) |
+
+### 🔬 中层 (Middle Layer): 为什么这么做？如何验证？
+
+| 问题 | 答案 |
+|---|---|
+| **为什么做 Scaling Study?** | 量化并行效率边界，发现 Memory Bandwidth Saturation (内存墙) |
+| **如何验证正确性?** | Mass 守恒 < 10⁻¹³，通过 `scripts/validate.py` + CTest 自动化门禁 |
+| **提升效果的关键动作** | Hybrid MPI+OpenMP (减少内存冲突，+7%)、运行时参数化、Docker Cluster 验证 |
+
+### ⚙️ 底层 (Deep Layer): 技术选型与生态
+
+| 维度 | 可选方案 | 选择 | 理由 |
+|---|---|---|---|
+| 分布式并行 | MPI / PGAS / Spark | **MPI** | HPC 行业标准，超算普遍支持 |
+| 共享内存并行 | OpenMP / TBB / pthread | **OpenMP** | 指令式，与 MPI 集成成熟 |
+| GPU 加速 | CUDA / OpenACC / OpenMP Target | **OpenACC + OMP Target** | 指令式，保持代码可读性 |
+| 构建系统 | Makefile / CMake / Meson | **CMake** | 跨平台，find_package 自动检测 |
+
+**上下游影响**：
+*   **上游**：Euler 方程 → Finite Volume + Explicit 时间积分；Strang Splitting → X→Z→Z→X 更新顺序。
+*   **下游**：代码可直接移植到 TOP500 超算；Hybrid 策略可泛化到任何 Memory-Bound 应用。
+
+---
+
 ## 1. Surface Level
 **"What does this project do? How does it work?"**
 

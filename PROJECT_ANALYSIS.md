@@ -12,6 +12,11 @@
     *   **Input**: Simulation parameters (Grid size `nx, nz`, Time `dt`, Data Scenario like "Rising Thermal").
     *   **Output**: Console logs tracking **Mass Conservation** and **Total Energy**; optional parallel NetCDF (`.nc`) files for visualization.
 
+### Surface Level Improvements (Implemented)
+*   **Runtime Parameter Configuration**:
+    *   **Problem**: Legacy parameters (`NX`, `NZ`, `SIM_TIME`) were hardcoded via preprocessor macros, requiring recompilation (`make clean && make`) to change simulation scale.
+    *   **Solution**: Implemented a CLI argument parser in `miniWeather_serial`. The simulation can now be configured at runtime (e.g., `./miniWeather_serial --nx 200 --time 5`), enabling rapid scaling studies and CI/CD testing without recompilation overhead.
+
 ## 2. Middle Level
 **"Why this architecture? How is correctness verified?"**
 
@@ -21,6 +26,13 @@
 *   **Verification Mechanisms**:
     *   **Conservation Laws**: The simulation explicitly monitors Global Mass and Total Energy. In a purely explicitly scheme, Mass should be conserved to machine precision ($\approx 10^{-15}$), while Energy may drift slightly due to dissipation (Hyper-viscosity).
     *   **Hyper-viscosity**: Explicit diffusion (`hv_beta`) is added to stabilize the numerical scheme against high-frequency noise (Gibbs phenomenon), which is critical for non-linear shock capture.
+
+### Middle Level Improvements (Implemented)
+*   **Automated Physics Validation**:
+    *   **Problem**: Correctness verification was manual (reading console logs) and prone to regression during refactoring.
+    *   **Solution**: Integrated a Python validations script (`scripts/validate.py`) into the `CTest` pipeline.
+    *   **Mechanism**: The script executes the simulation, parses `d_mass` and `d_te` using Regex, and asserts they satisfy strict tolerance thresholds (Mass < $10^{-13}$, Energy < $10^{-4}$).
+    *   **Impact**: Now, `make test` not only checks if the code runs (Exit 0) but also proves that **physics is conserved**, serving as a true correctness gate.
 
 ## 3. Deep Level
 **"Technical Decisions & Engineering Trade-offs"**
@@ -33,7 +45,33 @@
     *   **Non-Blocking Communication**: Uses `MPI_Irecv` (post receive) -> `Pack` -> `MPI_Isend`, allowing potential overlap of packing work with communication latency.
 *   **I/O Bottleneck Mitigation**:
     *   **Parallel NetCDF (PNetCDF)**: The original code leverages PNetCDF to allow all MPI ranks to write to a single file simultaneously. This avoids the bottleneck of gathering all data to Rank 0 (Serial I/O), which would crash memory on Petascale systems.
-    *   **Engineering Improvement (My Contribution)**: Recognizing that PNetCDF is a "heavy" dependency for local development, I implemented `ifdef` guards to make I/O optional, significantly lowering the barrier to entry for development and testing.
+
+### Deep Level Improvements (Implemented)
+*   **Hybrid MPI + OpenMP Parallelism**:
+    *   **Problem**: Pure MPI scaling saturated memory bandwidth at 4 processes (33% efficiency), as analyzed in the Weak Scaling Study.
+    *   **Solution**: Implemented OpenMP threading (`#pragma omp parallel for`) in the computationally intensive flux reconstruction kernels (`compute_tendencies`).
+    *   **Impact**: Enables **Hybrid Parallelism** (e.g., 1 MPI Rank x 8 OpenMP Threads per node). This significantly reduces halo exchange overhead (fewer ranks = fewer halos) and relieves memory pressure by sharing the address space among threads.
+
+### Deep Level Engineering Journey: The "Memory Wall"
+**1. Discovering the Problem (What)**
+Initial Weak Scaling experiments revealed a critical bottleneck: running 4 MPI ranks on a single node caused efficiency to collapse to **33.2%**.
+*   **Hypothesis**: The Apple M-series Unified Memory was saturated. 4 independent processes were fighting for the same memory bandwidth, creating a "Memory Wall."
+
+**2. Choosing a Solution (Why)**
+*   **Constraint**: Cannot add more physical nodes (limited to single-node server/workstation).
+*   **Strategy**: Switch from **Pure MPI** to **Hybrid MPI + OpenMP**.
+*   **Rationale**: By replacing multiple MPI processes with threads within a single process, we allow them to **share** the same memory address space. This reduces data duplication (ghost cells) and, more importantly, allows the L2/L3 caches to be utilized more effectively, reducing trips to main RAM.
+
+**3. Implementation & Verification (How & Result)**
+*   **Action**: Identified the computational kernels (`compute_tendencies_x`, `compute_tendencies_z`) and applied `#pragma omp parallel for` with careful private variable scoping to prevent data races.
+*   **Experiment**: Ran a comparative study on a fixed workload ($400 \times 200$ grid) using 4 total cores.
+*   **Results**:
+    *   **Pure MPI (4 Ranks)**: 1.68s
+    *   **Hybrid Balanced (2 Ranks x 2 Threads)**: **1.56s** (Faster!)
+    *   **Pure OpenMP (1 Rank x 4 Threads)**: 3.06s (Slower due to NUMA/False Sharing)
+*   **Conclusion**: Found the "Sweet Spot" at 2x2. The Hybrid approach successfully mitigated the memory bandwidth bottleneck, improving performance by **~7%** on the same hardware.
+
+
 
 ## 4. Build System Modernization
 *   **Why CMake?**: The original project used manual `Makefile`s dependent on specific HPC modules (Cray/PGI).
@@ -73,20 +111,53 @@
 ## 6. Code Refactoring & Modernization
 **Improving Maintainability, Safety, and Extensibility**
 
-In addition to performance analysis, I undertook a significant refactoring effort to modernize the legacy C-style codebase into idiomatic C++.
+I refactored the legacy C-style codebase into idiomatic C++11, strictly following the 3W principle.
 
-*   **Object-Oriented Encapsulation**:
-    *   **Problem**: The original code relied on global variables (`double *state`, `int nx`) and free functions, polluting the global namespace and making unit testing impossible.
-    *   **Solution**: Encapsulated the entire simulation state and logic into a `MiniWeatherSimulation` class. This provides a clear interface (`init`, `Run`, `Finalize`) and allows for multiple simulation instances (e.g., for ensemble support in the future).
+### 6.1 Object-Oriented Encapsulation
+**1. What (Problem)**
+The original code relied on global variables (`double *state`) and free functions. The global namespace was polluted, making it impossible to instantiate multiple simulations (e.g., for an ensemble run) or perform unit testing.
 
-*   **RAII & Memory Safety**:
-    *   **Problem**: Manual `malloc` and `free` calls were scattered throughout `init`, `output`, and `finalize`, leading to potential double-free errors (observed during development) and memory leaks if early returns occurred.
-    *   **Solution**: Replaced all raw pointer arrays with `std::vector<double>`. This leverages **RAII (Resource Acquisition Is Initialization)** to ensure automatic memory cleanup when the class instance goes out of scope, eliminating memory leaks and dampening usage errors.
+**2. Why (Solution Strategy)**
+Encapsulate state and logic into a `MiniWeatherSimulation` class. This enforces **Separation of Concerns** and provides a clean API surface (`init`, `Run`, `Finalize`).
 
-*   **Decoupling Serial & MPI**:
-    *   **Problem**: The "serial" version contained a "Dummy MPI" section and included `mpi.h` with dummy functions, creating a hard dependency on MPI libraries even for the serial build.
-    *   **Solution**: Completely stripped MPI dependencies from `miniWeather_serial.cpp`. It is now a standalone C++ application that builds without an MPI compiler, serving as a true "Gold Standard" baseline for correctness verification.
+**3. How (Implementation)**
+*   Moved all global pointers (`state`, `flux`, `tend`) into private class members.
+*   Converted `init()`, `time_step()`, and `output()` into member functions.
+*   **Result**: The code is now modular. The `main()` function is reduced to a simple driver that instantiates the class, enabling future support for ensemble Kalman filters without global state collisions.
 
-*   **Dependency Management**:
-    *   **Problem**: Hard dependency on Parallel NetCDF (PNetCDF).
-    *   **Solution**: Implemented strict preprocessor guards (`#ifdef _PNETCDF`) around all I/O calls. This allows the code to build and run (with output disabled) on systems lacking the heavy PNetCDF library, significantly improving portability.
+### 6.2 RAII & Memory Safety
+**1. What (Problem)**
+Manual memory management (`malloc`/`free`) was scattered across `init` and `finalize`. This led to a fragile lifecycle where early returns (errors) could cause memory leaks, and redundant `free` calls caused double-free crashes.
+
+**2. Why (Solution Strategy)**
+Adopt **RAII (Resource Acquisition Is Initialization)**. Resources should own themselves and clean up automatically when they go out of scope.
+
+**3. How (Implementation)**
+*   Replaced all raw `double*` arrays with `std::vector<double>`.
+*   Removed explicit `free()` calls and the `Finalize()` method's memory logic.
+*   **Result**: Eliminated all memory leaks and double-free errors. The code is now exception-safe by default.
+
+### 6.3 Decoupling Serial & MPI
+**1. What (Problem)**
+The "Serial" version was fake—it still included `mpi.h` and used dummy MPI functions. This created a hard dependency on an MPI compiler even for simple 1-process development, raising the barrier to entry.
+
+**2. Why (Solution Strategy)**
+Create a truly standalone Serial build target. This serves as a "Gold Standard" for correctness debugging without the complexity of parallel runtimes.
+
+**3. How (Implementation)**
+*   Refactored `miniWeather_serial.cpp` to strip all MPI references.
+*   Updated `CMakeLists.txt` to define separate targets (`miniWeather_serial` vs `miniWeather_mpi`).
+*   **Result**: Developers can now build (and test physics) on a laptop without installing OpenMPI.
+
+### 6.4 Dependency Management (Optional PNetCDF)
+**1. What (Problem)**
+The code had a hard dependency on Parallel NetCDF (PNetCDF). While excellent for production runs, PNetCDF is a "heavy" library that is difficult to install on personal laptops (requiring MPI-IO support), blocking local development.
+
+**2. Why (Solution Strategy)**
+Make I/O strictly optional. The core physics kernel does not require I/O to function or be verified.
+
+**3. How (Implementation)**
+*   Wrapped all PNetCDF header includes and function calls with `#ifdef _PNETCDF` guards.
+*   Updated `CMakeLists.txt` to only link PNetCDF if found on the system.
+*   **Result**: Drastically lowered the barrier to entry. New developers can clone and run (`cmake . && make`) immediately, significantly improving project portability.
+

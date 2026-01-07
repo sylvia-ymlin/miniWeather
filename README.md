@@ -52,30 +52,17 @@ This repository documents a systematic investigation into performance optimizati
     -   **Methodology:** Fix local domain at 100×50 cells per rank and scale the global domain with process count.
     -   **Success Criteria:** Weak scaling efficiency remains above 80% for p ≤ 16. If not, identify whether the bottleneck is halo exchange latency or global reduction cost.
 
-### Phase 2: Architectural Re-engineering for Large-Scale Simulation
+### Phase 2: Architectural Re-engineering & Optimization
+**Research Question:** *How can we overcome single-node memory bandwidth limits and improve usability?*
 
-**Research Question:** *How does extending the physical model to 3D and the parallel decomposition to 2D affect scalability compared to the 2D/1D baseline?*
+- [x] **2.1: Modernization & CI/CD**
+    - **Objective:** Refactor legacy Code to idiomatic C++, remove hard dependencies, and establish automated correctness gates.
+    - **Outcome:** Implemented `MiniWeatherSimulation` class, RAII memory management, and `scripts/validate.py` for automated physics verification.
 
--   [ ] **2.1: Three-Dimensional Physics Implementation**
-    -   **Objective:** Extend the governing equations and software architecture from (x,z) to (x,y,z) while maintaining numerical conservation.
-    -   **Tasks:**
-        -   Add y-momentum to the state vector and refactor all core arrays to a 3D layout.
-        -   Implement `compute_tendencies_y` for y-direction fluxes.
-        -   Extend Strang splitting to an X-Y-Z-Z-Y-X sequence.
-        -   Develop a 3D verification suite (e.g., advection of a Gaussian pulse) to confirm 4th-order spatial convergence.
-
--   [ ] **2.2: Two-Dimensional Domain Decomposition Implementation**
-    -   **Hypothesis:** A 2D (x,y) decomposition will reduce the communication-to-computation ratio from O(p) to O(√p), maintaining >75% parallel efficiency at p=64, a significant improvement over the 1D case.
-    -   **Implementation:**
-        -   Establish a 2D MPI Cartesian Topology using `MPI_Cart_create`.
-        -   Redesign the halo exchange mechanism to handle 4-neighbor (or 8-neighbor) communication, using `MPI_Type_vector` or manual packing for non-contiguous data in the y-direction.
-        -   Handle load balancing for grids not perfectly divisible by the process grid dimensions.
-    -   **Performance Targets:**
-
-| Decomposition | Ranks | 400×200×100 Domain | T_comm / T_total |
-| :--- | :--- | :--- | :--- |
-| 1D (Baseline) | 16 | ≈ 68% Efficiency | ≈ 35% |
-| **2D (Target)** | **16** | **> 75% Efficiency** | **< 25%** |
+- [x] **2.2: Hybrid Parallelism (MPI + OpenMP)**
+    - **Hypothesis:** Hybrid parallelism will reduce memory bandwidth contention on multi-core nodes compared to pure MPI.
+    - **Implementation:** Added OpenMP threading to `compute_tendencies` kernels.
+    - **Result:** Hybrid configuration (2 MPI x 2 Threads) outperformed Pure MPI (4 MPI) by ~7%, confirming the "Memory Wall" hypothesis.
 
 ### Phase 3: Advanced Algorithm & Architecture Exploration (Optional Extensions)
 

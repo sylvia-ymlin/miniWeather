@@ -13,7 +13,6 @@
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <string>
 #include <vector>
 // #include "pnetcdf.h" // NetCDF library for I/O
 #include <chrono>
@@ -162,7 +161,7 @@ private:
   double mass0, te0, mass, te;
 
   // Member Functions
-  void init(int argc, char **argv);
+  void init(int *argc, char ***argv);
   void injection(double x, double z, double &r, double &u, double &w, double &t,
                  double &hr, double &ht);
   void density_current(double x, double z, double &r, double &u, double &w,
@@ -195,7 +194,7 @@ private:
 };
 
 MiniWeatherSimulation::MiniWeatherSimulation(int argc, char **argv) {
-  init(argc, argv);
+  init(&argc, &argv);
 }
 
 MiniWeatherSimulation::~MiniWeatherSimulation() { Finalize(); }
@@ -666,47 +665,17 @@ void MiniWeatherSimulation::set_halo_values_z(double *state) {
  * 4. set the initial conditions
  * 5. 静水平衡背景场计算
  */
-void MiniWeatherSimulation::init(int argc, char **argv) {
+void MiniWeatherSimulation::init(int *argc, char ***argv) {
   int i, k, ii, kk, ll, inds;
   double x, z, r, u, w, t, hr, ht;
   double center_x, center_z;
 
   // Serial version: 1 rank
-  // Initialize default config from macros, but allow override
   nx_glob = _NX;
   nz_glob = _NZ;
   sim_time = _SIM_TIME;
   output_freq = _OUT_FREQ;
   data_spec_int = _DATA_SPEC;
-
-  // Simple command line argument parsing
-  for (int i = 1; i < argc; i++) {
-    std::string arg = argv[i];
-    if (arg == "--nx" && i + 1 < argc) {
-      nx_glob = atoi(argv[++i]);
-    } else if (arg == "--nz" && i + 1 < argc) {
-      nz_glob = atoi(argv[++i]);
-    } else if (arg == "--time" && i + 1 < argc) {
-      sim_time = atof(argv[++i]);
-    } else if (arg == "--freq" && i + 1 < argc) {
-      output_freq = atof(argv[++i]);
-    } else if (arg == "--data" && i + 1 < argc) {
-      data_spec_int = atoi(argv[++i]);
-    } else if (arg == "--help" || arg == "-h") {
-      printf("Usage: ./miniWeather_serial [options]\n");
-      printf("Options:\n");
-      printf("  --nx <int>      Global X grid size (default: %d)\n", _NX);
-      printf("  --nz <int>      Global Z grid size (default: %d)\n", _NZ);
-      printf("  --time <float>  Simulation time (default: %lf)\n",
-             (double)_SIM_TIME);
-      printf("  --freq <float>  Output frequency (default: %lf)\n",
-             (double)_OUT_FREQ);
-      printf("  --data <int>    Data specification (default: %d)\n",
-             _DATA_SPEC);
-      exit(0);
-    }
-  }
-
   dx = xlen / nx_glob;
   dz = zlen / nz_glob;
 

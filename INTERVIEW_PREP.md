@@ -3,7 +3,19 @@
 ## 1. Elevator Pitch
 "I optimized and modernized a High-Performance Computing (HPC) mini-app called `miniWeather`, which simulates atmospheric dynamics. My work focused on unblocking local development by refactoring the I/O layer to be modular (removing hard dependencies on Parallel NetCDF) and migrating the legacy build system to modern CMake. This allowed me to rigorously verify the 4th-order Finite Volume solver's scalability and correctness (conservation laws) on standard hardware before deployment to clusters."
 
-## 2. STAR Stories
+## 2. The "Fearless" Pivot Strategy
+*Advice for the Interview: You don't need to be a Ph.D. in atmospheric physics. You are an **HPC Engineer**. Your job is to take scientific code and make it fast, portable, and maintainable. If they ask about the physics, pivot to the performance/engineering.*
+
+### The Golden Rule: "I treat the Physics as an Invariant"
+If asked a hard math/physics question (e.g., "Derive the Euler equations"):
+> "My focus was on the **computational performance and software architecture**, not the derivation of the governing equations. I treat the physics kernel as a verified 'black box' invariant. My contribution was ensuring that this kernel runs efficiently in parallel and is accessible to developers via modern build systems. I verified *my* work by checking that Mass and Energy were conserved to machine precision after my refactoring."
+
+### The "Original Author" pivot
+If they ask "Did you write this whole thing from scratch?":
+> "This is a well-known mini-app from Oak Ridge National Lab used for training. I took the **legacy, tutorial-style codebase** and refactored it into a **production-quality C++ architecture**. The original code was a single-file C script with global variables and no build system. I transformed it into an Object-Oriented, RAII-safe application with CMake, Unit Tests, and a modular I/O layer. Think of it as taking research code and engineering it for production."
+
+## 3. STAR Stories
+
 
 ### Situation: Dependency Blocker for Local Dev
 *   **Situation**: The project required `PNetCDF` (Parallel NetCDF) to compile, which is standard on Cray supercomputers but rare/complex to install on local macOS/Linux workstations. This blocked rapid prototyping and debugging.

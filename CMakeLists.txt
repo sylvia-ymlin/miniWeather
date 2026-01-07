@@ -33,10 +33,14 @@ add_definitions(-D_DATA_SPEC=${DATA_SPEC})
 
 # MPI Executable
 add_executable(miniWeather_mpi miniWeather_mpi.cpp)
-target_link_libraries(miniWeather_mpi PRIVATE MPI::MPI_CXX)
+if(OpenMP_CXX_FOUND)
+    target_link_libraries(miniWeather_mpi PUBLIC OpenMP::OpenMP_CXX)
+endif()
+target_link_libraries(miniWeather_mpi PUBLIC MPI::MPI_CXX)
 
 # Optional: Serial Executable (only if I fix the code later, currently disabled to avoid build errors)
 add_executable(miniWeather_serial miniWeather_serial.cpp)
 
 enable_testing()
+add_test(NAME ValidationTest COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/scripts/validate.py --exe $<TARGET_FILE:miniWeather_serial> --nx 100 --nz 50 --time 5)
 add_test(NAME MPI_Test COMMAND mpiexec -n 2 ./miniWeather_mpi)

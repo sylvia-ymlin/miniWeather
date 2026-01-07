@@ -14,6 +14,7 @@
 #include <mpi.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string>
 #include <vector>
 #ifdef _PNETCDF
 #include "pnetcdf.h"
@@ -382,6 +383,8 @@ void MiniWeatherSimulation::compute_tendencies_x(double *state, double *flux,
   // TODO: THREAD ME
   /////////////////////////////////////////////////
   // Compute fluxes in the x-direction for each cell
+#pragma omp parallel for collapse(2) default(shared) private(                  \
+    ll, s, r, u, w, t, p, stencil, d3_vals, vals, inds)
   for (k = 0; k < nz; k++) {
     for (i = 0; i < nx + 1; i++) {
       // Use fourth-order interpolation from four cell averages to compute the
@@ -425,6 +428,7 @@ void MiniWeatherSimulation::compute_tendencies_x(double *state, double *flux,
   // TODO: THREAD ME
   /////////////////////////////////////////////////
   // Use the fluxes to compute tendencies for each cell
+#pragma omp parallel for collapse(3) default(shared) private(indt, indf1, indf2)
   for (ll = 0; ll < NUM_VARS; ll++) {
     for (k = 0; k < nz; k++) {
       for (i = 0; i < nx; i++) {
@@ -452,6 +456,8 @@ void MiniWeatherSimulation::compute_tendencies_z(double *state, double *flux,
   // TODO: THREAD ME
   /////////////////////////////////////////////////
   // Compute fluxes in the x-direction for each cell
+#pragma omp parallel for collapse(2) default(shared) private(                  \
+    ll, s, inds, stencil, vals, d3_vals, r, u, w, t, p)
   for (k = 0; k < nz + 1; k++) {
     for (i = 0; i < nx; i++) {
       // Use fourth-order interpolation from four cell averages to compute the
@@ -500,6 +506,8 @@ void MiniWeatherSimulation::compute_tendencies_z(double *state, double *flux,
   // TODO: THREAD ME
   /////////////////////////////////////////////////
   // Use the fluxes to compute tendencies for each cell
+#pragma omp parallel for collapse(3) default(shared) private(indt, indf1,      \
+                                                             indf2, inds)
   for (ll = 0; ll < NUM_VARS; ll++) {
     for (k = 0; k < nz; k++) {
       for (i = 0; i < nx; i++) {
@@ -671,6 +679,7 @@ void MiniWeatherSimulation::set_halo_values_z(double *state) {
   }
 }
 
+// 声明与调用需一致：int *argc, char ***argv
 void MiniWeatherSimulation::init(int *argc, char ***argv) {
   int i, k, ii, kk, ll, ierr, inds, i_end;
   double x, z, r, u, w, t, hr, ht, nper;
@@ -681,6 +690,42 @@ void MiniWeatherSimulation::init(int *argc, char ***argv) {
   sim_time = _SIM_TIME;
   output_freq = _OUT_FREQ;
   data_spec_int = _DATA_SPEC;
+
+  // Simple command line argument parsing (需要解引用指针)
+  // 注意：mpi版本一般使用 MPI_Init(&argc, &argv)，所以这里传入指针是符合 MPI
+  // 标准习惯的 解析时需要 (*argc) 和 (*argv)
+  int local_argc = *argc;
+  char **local_argv = *argv;
+
+  for (int i = 1; i < local_argc; i++) {
+    std::string arg = local_argv[i];
+    if (arg == "--nx" && i + 1 < local_argc) {
+      nx_glob = atoi(local_argv[++i]);
+    } else if (arg == "--nz" && i + 1 < local_argc) {
+      nz_glob = atoi(local_argv[++i]);
+    } else if (arg == "--time" && i + 1 < local_argc) {
+      sim_time = atof(local_argv[++i]);
+    } else if (arg == "--freq" && i + 1 < local_argc) {
+      output_freq = atof(local_argv[++i]);
+    } else if (arg == "--data" && i + 1 < local_argc) {
+      data_spec_int = atoi(local_argv[++i]);
+    } else if (arg == "--help" || arg == "-h") {
+      if (myrank == 0) {
+        printf("Usage: ./miniWeather_mpi [options]\n");
+        printf("Options:\n");
+        printf("  --nx <int>      Global X grid size (default: %d)\n", _NX);
+        printf("  --nz <int>      Global Z grid size (default: %d)\n", _NZ);
+        printf("  --time <float>  Simulation time (default: %lf)\n",
+               (double)_SIM_TIME);
+        printf("  --freq <float>  Output frequency (default: %lf)\n",
+               (double)_OUT_FREQ);
+        printf("  --data <int>    Data specification (default: %d)\n",
+               _DATA_SPEC);
+      }
+      MPI_Finalize();
+      exit(0);
+    }
+  }
   dx = xlen / nx_glob;
   dz = zlen / nz_glob;
 

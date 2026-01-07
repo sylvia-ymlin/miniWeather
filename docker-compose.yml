@@ -1,0 +1,31 @@
+version: '3'
+services:
+  master:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: mpi-master
+    hostname: master
+    volumes:
+      - ..:/app
+    ports:
+      - "2222:22"
+    networks:
+      - mpi-net
+
+  worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: mpi-worker
+    hostname: worker
+    volumes:
+      - ..:/app
+    networks:
+      - mpi-net
+    depends_on:
+      - master
+
+networks:
+  mpi-net:
+    driver: bridge

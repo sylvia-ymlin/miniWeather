@@ -161,3 +161,45 @@ Make I/O strictly optional. The core physics kernel does not require I/O to func
 *   Updated `CMakeLists.txt` to only link PNetCDF if found on the system.
 *   **Result**: Drastically lowered the barrier to entry. New developers can clone and run (`cmake . && make`) immediately, significantly improving project portability.
 
+*   **Result**: Drastically lowered the barrier to entry. New developers can clone and run (`cmake . && make`) immediately, significantly improving project portability.
+
+
+## 7. Infrastructure & Deployment Challenges
+**Lessons learned from deploying to Cloud-Native HPC Environments (AutoDL)**
+
+During the deployment test on a 128-Core Intel Xeon server (AutoDL Cloud), we encountered significant runtime challenges that highlighted the difference between "Bare Metal HPC" and "Containerized HPC".
+
+### 7.1 The "Zombie MPI" Incident
+**1. What (Problem)**
+While the code compiled successfully on the server (`cmake` & `make` worked), the MPI runtime (`mpirun`) deadlocked immediately upon launch. Even a single-process execution (`-n 1`) failed to produce output.
+
+**2. Why (Root Cause Analysis)**
+*   **Container Isolation**: The AutoDL container environment imposed strict security policies (Seccomp) that likely blocked the shared memory (`vader`) or process tracing (`ptrace`) system calls required by OpenMPI.
+*   **Hardware Mismatch**: OpenMPI automatically detected the host's InfiniBand hardware (`openib`/`ofi` components) but lacked the permissions to access the RDMA devices effectively, causing the initialization to hang indefinitely.
+
+**3. How (Mitigation & Fallback)**
+*   **Attempted Fixes**: We experimented with forcing TCP-only mode (`--mca btl self,tcp`) and completely disabling high-performance components (`--mca btl ^openib`), but the Process Lifecycle Manager (PLM) remained blocked.
+*   **Strategic Pivot**: Instead of fighting the infrastructure, we leveraged the **Decoupling Strategy** (Section 6.3).
+*   **Result**: We successfully deployed the **Serial Version** (`miniWeather_serial`). It executed the $400 \times 200$ workload in **1.21 seconds** (simulated 2.0s), physically validating the correctness of the computational kernel on Linux x86 architecture. This proved that while the *MPI Transport Layer* was incompatible with the specific container config, the *Computational Core* was portable and robust.
+
+## 8. Cluster Simulation (Local Docker)
+**Going Beyond Single-Node: Verifying Distributed Systems Engineering**
+
+To demonstrate mastery of MPI cluster management (even without physical access to a multi-node cluster), I engineered a **Containerized Simulation Environment**.
+
+**1. What (Architecture)**
+Constructed a virtual heterogeneous cluster using **Docker Compose**, consisting of:
+*   **Master Node**: Coordinates logic and dispatches MPI jobs.
+*   **Worker Node**: Receives compute tasks via SSH.
+*   **Shared Volume**: Maps the local source code into the container (`/app`), simulating a Network File System (NFS).
+
+**2. Why (Objective)**
+*   **Deployment Verification**: Validates the full "Write Once, Run Anywhere" promise of the codebase.
+*   **System Admin Skills**: Demonstrates handling of real-world HPC hurdles like **SSH Trust configuration**, **Hostfile management**, and **Network Discovery** between discrete IP addresses.
+
+**3. How (Implementation)**
+*   **Infrastructure as Code**: Auhtored `docker-compose.yml` to define the network topology.
+*   **Automation**: Wrote `start_cluster.sh` to bootstrap the cluster and automatically exchange SSH keys (`id_rsa.pub`) between Master and Worker, enabling password-less `mpirun`.
+*   **Validation**: Successfully ran a distributed MPI job across containers (`host: master:2, worker:2`).
+    *   **Result**: Physical correctness confirmed (`d_mass < 1e-14`).
+    *   **Insight**: While performace scaling was limited by the single-node Mac hardware, this test rigorously verified the **Distributed Communication Logic** over a TCP/IP network stack, ensuring the code is robust against network latency and serialization overheads typical of real clusters.

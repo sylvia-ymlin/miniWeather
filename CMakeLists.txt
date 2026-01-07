@@ -57,24 +57,10 @@ if(NOT ENABLE_PNETCDF)
 endif()
 
 # ============================================================================
-# Target 3: MPI + OpenACC (GPU Offloading via OpenACC)
-# Requires NVIDIA HPC SDK (nvc++) or PGI compiler
-# Build: cmake -DCMAKE_CXX_COMPILER=nvc++ -DENABLE_OPENACC=ON ..
+# Target 3: MPI + OpenACC (GPU Offloading)
+# Note: Manually compile with nvc++ due to complex linker dependencies
+# See PROJECT_ANALYSIS.md for instructions.
 # ============================================================================
-option(ENABLE_OPENACC "Build OpenACC GPU version" OFF)
-if(ENABLE_OPENACC)
-    add_executable(miniWeather_openacc miniWeather_mpi_openacc.cpp)
-    target_link_libraries(miniWeather_openacc PUBLIC MPI::MPI_CXX)
-    
-    # Check if we need to link PNetCDF
-    if(ENABLE_PNETCDF)
-        find_package(PNetCDF REQUIRED) 
-        target_link_libraries(miniWeather_openacc PUBLIC PNetCDF::PNetCDF)
-    endif()
-
-    target_compile_options(miniWeather_openacc PRIVATE -acc -gpu=managed -Minfo=accel)
-    message(STATUS "OpenACC target enabled. Requires nvc++ compiler.")
-endif()
 
 # ============================================================================
 # Target 4: MPI + OpenMP 4.5 Target (GPU Offloading via OpenMP)

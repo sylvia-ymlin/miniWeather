@@ -84,8 +84,51 @@
 *   **I/O Bottleneck Mitigation**:
     *   **Parallel NetCDF (PNetCDF)**: The original code leverages PNetCDF to allow all MPI ranks to write to a single file simultaneously. This avoids the bottleneck of gathering all data to Rank 0 (Serial I/O), which would crash memory on Petascale systems.
 
-### Deep Level Improvements (Implemented)
-*   **Hybrid MPI + OpenMP Parallelism**:
+### 4. Deep Layer Improvements (Infrastructure & GPU)
+
+### GPU Acceleration Verification (OpenACC)
+*Status: Verified on NVIDIA RTX 3090 (AutoDL/Ubuntu 20.04)*
+
+The OpenACC implementation enables GPU offloading for the most computationally intensive kernels (halo exchange and tendency computation). 
+
+**Verification Environment:**
+- **Hardware**: NVIDIA GeForce RTX 3090 (24GB VRAM)
+- **OS**: Ubuntu 20.04 LTS (Required for OpenMPI compatibility)
+- **Compiler**: NVIDIA HPC SDK 24.7 (`nvc++`)
+- **MPI**: MPICH 3.3.2 (Replaced OpenMPI to resolve hang issues)
+
+**Manual Compilation & Execution:**
+Due to complex linker dependencies in the cloud container environment, manual compilation is required for the GPU version:
+
+```bash
+# 1. Setup Environment
+export PATH=/opt/nvidia/hpc_sdk/Linux_x86_64/24.7/compilers/bin:$PATH
+export LD_LIBRARY_PATH=/opt/nvidia/hpc_sdk/Linux_x86_64/24.7/compilers/lib:$LD_LIBRARY_PATH
+
+# 2. Modify Source to Disable PNetCDF (if library is missing)
+sed -i 's/#include "pnetcdf.h"/\/\/ #include "pnetcdf.h" \/\/ disabled/' miniWeather_mpi_openacc.cpp
+
+# 3. Compile with nvc++
+nvc++ -acc -gpu=managed -Minfo=accel \
+    -D_NX=100 -D_NZ=50 -D_SIM_TIME=2 -D_OUT_FREQ=-1 -D_DATA_SPEC=2 \
+    -D_NO_PNETCDF \
+    -dM -E - < /dev/null | grep _NO_PNETCDF  # Verify macro
+    
+nvc++ -acc -gpu=managed -Minfo=accel \
+    -D_NX=100 -D_NZ=50 -D_SIM_TIME=2 -D_OUT_FREQ=-1 -D_DATA_SPEC=2 \
+    -D_NO_PNETCDF \
+    -I/usr/include/x86_64-linux-gnu/mpich \
+    -o miniWeather_openacc miniWeather_mpi_openacc.cpp \
+    -lmpicxx -lmpi
+
+# 4. Run (Allow root for container)
+mpirun --allow-run-as-root -n 1 ./miniWeather_openacc
+```
+
+**Result:**
+The simulation successfully runs on the GPU, with `nvidia-smi` confirming compute utilization. The output `d_mass: 0.000000e+00` confirms physical correctness is maintained.
+
+### Hybrid MPI + OpenMP Parallelism:
     *   **Problem**: Pure MPI scaling saturated memory bandwidth at 4 processes (33% efficiency), as analyzed in the Weak Scaling Study.
     *   **Solution**: Implemented OpenMP threading (`#pragma omp parallel for`) in the computationally intensive flux reconstruction kernels (`compute_tendencies`).
     *   **Impact**: Enables **Hybrid Parallelism** (e.g., 1 MPI Rank x 8 OpenMP Threads per node). This significantly reduces halo exchange overhead (fewer ranks = fewer halos) and relieves memory pressure by sharing the address space among threads.

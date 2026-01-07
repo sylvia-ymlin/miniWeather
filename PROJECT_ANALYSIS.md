@@ -52,6 +52,9 @@
     *   **Solution**: Implemented OpenMP threading (`#pragma omp parallel for`) in the computationally intensive flux reconstruction kernels (`compute_tendencies`).
     *   **Impact**: Enables **Hybrid Parallelism** (e.g., 1 MPI Rank x 8 OpenMP Threads per node). This significantly reduces halo exchange overhead (fewer ranks = fewer halos) and relieves memory pressure by sharing the address space among threads.
 
+![Hybrid Architecture](hybrid_architecture.png)
+*Figure: Hybrid MPI+OpenMP architecture. MPI handles inter-node domain decomposition while OpenMP parallelizes compute loops within each process. Threads share L2/L3 cache, reducing memory bandwidth pressure.*
+
 ### Deep Level Engineering Journey: The "Memory Wall"
 **1. Discovering the Problem (What)**
 Initial Weak Scaling experiments revealed a critical bottleneck: running 4 MPI ranks on a single node caused efficiency to collapse to **33.2%**.

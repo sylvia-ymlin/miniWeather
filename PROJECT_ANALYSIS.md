@@ -86,89 +86,58 @@
 
 ### 4. Deep Layer Improvements (Infrastructure & GPU)
 
-### GPU Acceleration Verification (OpenACC)
-*Status: Verified on NVIDIA RTX 3090 (AutoDL/Ubuntu 20.04)*
+### Infrastructure Engineering Journey: Overcoming Cloud Constraints
+Deploying HPC software on cloud containers (AutoDL) presented unique challenges that simulated real-world deployment constraints.
 
-The OpenACC implementation enables GPU offloading for the most computationally intensive kernels (halo exchange and tendency computation). 
+*   **Constraint 1: "No Space Left on Device"**: The system disk (25GB) was saturated by default environments.
+    *   *Solution*: Diagnosed usage with `du -h`, cleaned Conda caches, and strategically deployed the 2GB NVIDIA HPC SDK to the data disk (`/root/autodl-tmp/`).
+*   **Constraint 2: MPI Runtime Hangs**: The default Ubuntu 22.04 OpenMPI environment caused silent deadlocks.
+    *   *Solution*: Replaced the base image with Ubuntu 20.04 and switched to MPICH implementation, resolving the hang.
+*   **Constraint 3: Linker Dependencies**: The automated CMake build system struggled with the non-standard paths of the manually installed HPC SDK and PNetCDF libraries.
+    *   *Solution*: Developed a robust manual compilation verification process (documented below) to bypass build system complexity and isolate compiler flags (`-gpu=managed`, `-Minfo=accel`).
 
-**Verification Environment:**
-- **Hardware**: NVIDIA GeForce RTX 3090 (24GB VRAM)
-- **OS**: Ubuntu 20.04 LTS (Required for OpenMPI compatibility)
-- **Compiler**: NVIDIA HPC SDK 24.7 (`nvc++`)
-- **MPI**: MPICH 3.3.2 (Replaced OpenMPI to resolve hang issues)
+### GPU Acceleration Verification
+We successfully verified two directive-based GPU implementations on an NVIDIA RTX 3090.
 
-**Manual Compilation & Execution:**
-Due to complex linker dependencies in the cloud container environment, manual compilation is required for the GPU version:
+#### 1. OpenACC Implementation
+*   **Compiler**: `nvc++ 24.7`
+*   **Flags**: `-acc -gpu=managed -Minfo=accel`
+*   **Verification**:
+    ```bash
+    # Manual Compilation Command
+    nvc++ -acc -gpu=managed -Minfo=accel \
+        -D_NX=100 -D_NZ=50 -D_SIM_TIME=2 -D_OUT_FREQ=-1 -D_DATA_SPEC=2 \
+        -D_NO_PNETCDF \
+        -I/usr/include/x86_64-linux-gnu/mpich \
+        -o miniWeather_openacc miniWeather_mpi_openacc.cpp \
+        -lmpicxx -lmpi
+    ```
+*   **Result**: `d_mass: 0.000000e+00` (Perfect physical conservation).
 
-```bash
-# 1. Setup Environment
-export PATH=/opt/nvidia/hpc_sdk/Linux_x86_64/24.7/compilers/bin:$PATH
-export LD_LIBRARY_PATH=/opt/nvidia/hpc_sdk/Linux_x86_64/24.7/compilers/lib:$LD_LIBRARY_PATH
+#### 2. OpenMP 4.5 Target Offloading
+*   **Compiler**: `nvc++ 24.7`
+*   **Flags**: `-mp=gpu -gpu=managed -Minfo=mp`
+*   **Verification**:
+    ```bash
+    # Manual Compilation Command
+    nvc++ -mp=gpu -gpu=managed -Minfo=mp \
+        -D_NX=100 -D_NZ=50 -D_SIM_TIME=2 -D_OUT_FREQ=-1 -D_DATA_SPEC=2 \
+        -D_NO_PNETCDF \
+        -I/usr/include/x86_64-linux-gnu/mpich \
+        -o miniWeather_omp45 miniWeather_mpi_openmp45.cpp \
+        -lmpicxx -lmpi
+    ```
+*   **Result**: `d_mass: -1.953276e-16` (Machine precision conservation).
 
-# 2. Modify Source to Disable PNetCDF (if library is missing)
-sed -i 's/#include "pnetcdf.h"/\/\/ #include "pnetcdf.h" \/\/ disabled/' miniWeather_mpi_openacc.cpp
+#### Verification Summary Table
+| Implementation | Hardware | Runtime (2s sim) | Mass Error (`d_mass`) | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| **Serial (Ref)** | Apple M2 Max | ~0.002s | ~1.0e-16 | Verified |
+| **Hybrid (CPU)** | 2 Nodes (Docker) | ~0.005s | ~1.0e-16 | Verified |
+| **OpenACC (GPU)**| NVIDIA RTX 3090 | **0.0008s** | **0.00e+00** | **VERIFIED** |
+| **OpenMP (GPU)** | NVIDIA RTX 3090 | **0.0009s** | **-1.95e-16** | **VERIFIED** |
 
-# 3. Compile with nvc++
-nvc++ -acc -gpu=managed -Minfo=accel \
-    -D_NX=100 -D_NZ=50 -D_SIM_TIME=2 -D_OUT_FREQ=-1 -D_DATA_SPEC=2 \
-    -D_NO_PNETCDF \
-    -dM -E - < /dev/null | grep _NO_PNETCDF  # Verify macro
-    
-nvc++ -acc -gpu=managed -Minfo=accel \
-    -D_NX=100 -D_NZ=50 -D_SIM_TIME=2 -D_OUT_FREQ=-1 -D_DATA_SPEC=2 \
-    -D_NO_PNETCDF \
-    -I/usr/include/x86_64-linux-gnu/mpich \
-    -o miniWeather_openacc miniWeather_mpi_openacc.cpp \
-    -lmpicxx -lmpi
-
-# 4. Run (Allow root for container)
-mpirun --allow-run-as-root -n 1 ./miniWeather_openacc
-```
-
-**Result:**
-The simulation successfully runs on the GPU, with `nvidia-smi` confirming compute utilization. The output `d_mass: 0.000000e+00` confirms physical correctness is maintained.
-
-### Hybrid MPI + OpenMP Parallelism:
-    *   **Problem**: Pure MPI scaling saturated memory bandwidth at 4 processes (33% efficiency), as analyzed in the Weak Scaling Study.
-    *   **Solution**: Implemented OpenMP threading (`#pragma omp parallel for`) in the computationally intensive flux reconstruction kernels (`compute_tendencies`).
-    *   **Impact**: Enables **Hybrid Parallelism** (e.g., 1 MPI Rank x 8 OpenMP Threads per node). This significantly reduces halo exchange overhead (fewer ranks = fewer halos) and relieves memory pressure by sharing the address space among threads.
-
-![Hybrid Architecture](hybrid_architecture.png)
-*Figure: Hybrid MPI+OpenMP architecture. MPI handles inter-node domain decomposition while OpenMP parallelizes compute loops within each process. Threads share L2/L3 cache, reducing memory bandwidth pressure.*
-
-### Deep Level Engineering Journey: The "Memory Wall"
-**1. Discovering the Problem (What)**
-Initial Weak Scaling experiments revealed a critical bottleneck: running 4 MPI ranks on a single node caused efficiency to collapse to **33.2%**.
-*   **Hypothesis**: The Apple M-series Unified Memory was saturated. 4 independent processes were fighting for the same memory bandwidth, creating a "Memory Wall."
-
-**2. Choosing a Solution (Why)**
-*   **Constraint**: Cannot add more physical nodes (limited to single-node server/workstation).
-*   **Strategy**: Switch from **Pure MPI** to **Hybrid MPI + OpenMP**.
-*   **Rationale**: By replacing multiple MPI processes with threads within a single process, we allow them to **share** the same memory address space. This reduces data duplication (ghost cells) and, more importantly, allows the L2/L3 caches to be utilized more effectively, reducing trips to main RAM.
-
-**3. Implementation & Verification (How & Result)**
-*   **Action**: Identified the computational kernels (`compute_tendencies_x`, `compute_tendencies_z`) and applied `#pragma omp parallel for` with careful private variable scoping to prevent data races.
-*   **Experiment**: Ran a comparative study on a fixed workload ($400 \times 200$ grid) using 4 total cores.
-*   **Results**:
-    *   **Pure MPI (4 Ranks)**: 1.68s
-    *   **Hybrid Balanced (2 Ranks x 2 Threads)**: **1.56s** (Faster!)
-    *   **Pure OpenMP (1 Rank x 4 Threads)**: 3.06s (Slower due to NUMA/False Sharing)
-*   **Conclusion**: Found the "Sweet Spot" at 2x2. The Hybrid approach successfully mitigated the memory bandwidth bottleneck, improving performance by **~7%** on the same hardware.
-
-### GPU Offloading (OpenACC & OpenMP Target)
-**Extending Parallelism to Accelerator Architectures**
-
-In addition to CPU parallelism, the project includes GPU-accelerated versions using directive-based programming models.
-
-**1. OpenACC Version (`miniWeather_mpi_openacc.cpp`)**
-*   Uses `#pragma acc parallel loop` to offload compute kernels to NVIDIA GPUs.
-*   Memory managed via `acc_malloc` and explicit data regions.
-*   **Build**: `cmake -DCMAKE_CXX_COMPILER=nvc++ -DENABLE_OPENACC=ON ..`
-
-**2. OpenMP Target Version (`miniWeather_mpi_openmp45.cpp`)**
-*   Uses `#pragma omp target teams distribute parallel for` for GPU offloading.
-*   Portable across vendors (NVIDIA, AMD, Intel) with appropriate compiler support.
-*   **Build**: `cmake -DCMAKE_CXX_COMPILER=clang++ -DENABLE_OMP_TARGET=ON ..`
+*Note: Runtime is for a tiny validation mesh ($100 \times 50$) and is dominated by initialization overhead, but confirms successful execution pathway on GPU.*
 
 **Key Insight**: Both approaches maintain the same algorithmic structure as the CPU version, demonstrating the power of **directive-based parallelism**: add pragmas, keep the code readable, and let the compiler handle device management.
 

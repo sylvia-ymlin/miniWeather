@@ -6,7 +6,10 @@
 *   **Core Task**: Simulates the dynamics of a stratified, compressible, dry atmosphere using the Euler equations. It mimics the computational kernel of large-scale weather prediction models (like WRF or CAM).
 *   **Key Features**:
     *   **Physics**: Solves for Density ($\rho$), Momentum ($\rho u, \rho w$), and Potential Temperature ($\rho \theta$).
-    *   **Parallelism**: Implements **Hybrid MPI + OpenMP** parallelism. MPI handles domain decomposition (inter-node), while OpenMP handles loop-level parallelism (intra-node).
+    *   **Parallelism**: Implements multiple parallelization strategies:
+        *   **MPI**: Domain decomposition for distributed memory (inter-node).
+        *   **OpenMP**: Thread-level parallelism for shared memory (intra-node).
+        *   **OpenACC / OpenMP Target**: GPU offloading for accelerator architectures.
     *   **Numerical Method**: Uses a **Finite Volume Method (FVM)** with 4th-order spatial reconstruction and 3rd-order Runge-Kutta time integration.
 *   **Input/Output**:
     *   **Input**: Simulation parameters (Grid size `nx, nz`, Time `dt`, Data Scenario like "Rising Thermal").
@@ -74,6 +77,22 @@ Initial Weak Scaling experiments revealed a critical bottleneck: running 4 MPI r
     *   **Pure OpenMP (1 Rank x 4 Threads)**: 3.06s (Slower due to NUMA/False Sharing)
 *   **Conclusion**: Found the "Sweet Spot" at 2x2. The Hybrid approach successfully mitigated the memory bandwidth bottleneck, improving performance by **~7%** on the same hardware.
 
+### GPU Offloading (OpenACC & OpenMP Target)
+**Extending Parallelism to Accelerator Architectures**
+
+In addition to CPU parallelism, the project includes GPU-accelerated versions using directive-based programming models.
+
+**1. OpenACC Version (`miniWeather_mpi_openacc.cpp`)**
+*   Uses `#pragma acc parallel loop` to offload compute kernels to NVIDIA GPUs.
+*   Memory managed via `acc_malloc` and explicit data regions.
+*   **Build**: `cmake -DCMAKE_CXX_COMPILER=nvc++ -DENABLE_OPENACC=ON ..`
+
+**2. OpenMP Target Version (`miniWeather_mpi_openmp45.cpp`)**
+*   Uses `#pragma omp target teams distribute parallel for` for GPU offloading.
+*   Portable across vendors (NVIDIA, AMD, Intel) with appropriate compiler support.
+*   **Build**: `cmake -DCMAKE_CXX_COMPILER=clang++ -DENABLE_OMP_TARGET=ON ..`
+
+**Key Insight**: Both approaches maintain the same algorithmic structure as the CPU version, demonstrating the power of **directive-based parallelism**: add pragmas, keep the code readable, and let the compiler handle device management.
 
 
 ## 4. Build System Modernization
